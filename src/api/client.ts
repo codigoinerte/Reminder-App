@@ -7,9 +7,6 @@
  */
 import { API_BASE_URL } from '../config';
 import type { ConnectionState, Schedule, ScheduleInput, WhatsAppStatus } from '../types';
-import * as mock from './mock';
-
-export const USE_MOCK = process.env.EXPO_PUBLIC_USE_MOCK !== 'false';
 
 // Token de sesión actual. El AuthContext lo setea tras login/registro.
 let authToken: string | null = null;
@@ -82,7 +79,6 @@ export async function authConnect(number: string): Promise<{
   pairingCode: string | null;
   state: ConnectionState;
 }> {
-  if (USE_MOCK) return mock.authConnect(number);
   return request('/auth/connect', {
     method: 'POST',
     body: JSON.stringify({ number }),
@@ -91,7 +87,6 @@ export async function authConnect(number: string): Promise<{
 
 /** Cancela una vinculación en curso: borra la instancia temporal en Evolution. */
 export async function authCancel(number: string): Promise<{ ok: boolean }> {
-  if (USE_MOCK) return mock.authCancel(number);
   return request('/auth/cancel', {
     method: 'POST',
     body: JSON.stringify({ number }),
@@ -102,7 +97,6 @@ export async function authState(number: string): Promise<{
   state: ConnectionState;
   registered: boolean;
 }> {
-  if (USE_MOCK) return mock.authState(number);
   return request(`/auth/state?number=${encodeURIComponent(number)}`);
 }
 
@@ -110,7 +104,6 @@ export async function authRegister(
   number: string,
   password: string
 ): Promise<{ token: string; phone: string }> {
-  if (USE_MOCK) return mock.authRegister(number, password);
   return request('/auth/register', {
     method: 'POST',
     body: JSON.stringify({ number, password }),
@@ -121,7 +114,6 @@ export async function authLogin(
   number: string,
   password: string
 ): Promise<{ token: string; phone: string }> {
-  if (USE_MOCK) return mock.authLogin(number, password);
   return request('/auth/login', {
     method: 'POST',
     body: JSON.stringify({ number, password }),
@@ -131,12 +123,10 @@ export async function authLogin(
 // ---- Schedules ----
 
 export async function listSchedules(): Promise<Schedule[]> {
-  if (USE_MOCK) return mock.listSchedules();
   return request<Schedule[]>('/schedules');
 }
 
 export async function createSchedule(input: ScheduleInput): Promise<Schedule> {
-  if (USE_MOCK) return mock.createSchedule(input);
   return request<Schedule>('/schedules', {
     method: 'POST',
     body: JSON.stringify(input),
@@ -147,7 +137,6 @@ export async function updateSchedule(
   id: string,
   input: Partial<ScheduleInput>
 ): Promise<Schedule> {
-  if (USE_MOCK) return mock.updateSchedule(id, input);
   return request<Schedule>(`/schedules/${id}`, {
     method: 'PUT',
     body: JSON.stringify(input),
@@ -155,7 +144,6 @@ export async function updateSchedule(
 }
 
 export async function deleteSchedule(id: string): Promise<void> {
-  if (USE_MOCK) return mock.deleteSchedule(id);
   return request<void>(`/schedules/${id}`, { method: 'DELETE' });
 }
 
@@ -163,7 +151,6 @@ export async function toggleSchedule(
   id: string,
   enabled: boolean
 ): Promise<Schedule> {
-  if (USE_MOCK) return mock.updateSchedule(id, { enabled });
   return request<Schedule>(`/schedules/${id}/enabled`, {
     method: 'PATCH',
     body: JSON.stringify({ enabled }),
@@ -173,8 +160,18 @@ export async function toggleSchedule(
 // ---- WhatsApp ----
 
 export async function getWhatsAppStatus(): Promise<WhatsAppStatus> {
-  if (USE_MOCK) return mock.getWhatsAppStatus();
   return request<WhatsAppStatus>('/whatsapp/status');
+}
+
+export type WhatsAppContact = { number: string; name: string };
+
+/**
+ * Lista los contactos de WhatsApp del usuario (de su instancia). El número ya
+ * viene en formato internacional. Devuelve [] si WhatsApp no está conectado.
+ */
+export async function getWhatsAppContacts(): Promise<WhatsAppContact[]> {
+  const res = await request<{ contacts: WhatsAppContact[] }>('/whatsapp/contacts');
+  return res.contacts ?? [];
 }
 
 /** Regenera el pairing code para reconectar (requiere sesión). */
@@ -182,16 +179,13 @@ export async function reconnectWhatsApp(): Promise<{
   pairingCode: string | null;
   state: ConnectionState;
 }> {
-  if (USE_MOCK) return mock.reconnectWhatsApp();
   return request('/whatsapp/reconnect', { method: 'POST' });
 }
 
 export async function logoutWhatsApp(): Promise<void> {
-  if (USE_MOCK) return mock.logoutWhatsApp();
   return request<void>('/whatsapp/logout', { method: 'DELETE' });
 }
 
 export async function deleteAccount(): Promise<void> {
-  if (USE_MOCK) return mock.deleteAccount();
   return request<void>('/whatsapp/account', { method: 'DELETE' });
 }
