@@ -11,8 +11,10 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view';
 import * as Localization from 'expo-localization';
 import { Ionicons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../theme/ThemeContext';
 import type { Contact } from '../types';
 import { listContacts, saveContact } from '../data/contactsDb';
@@ -34,10 +36,9 @@ type Props = {
   onSelect: (name: string, number: string) => void;
 };
 
-/** Detecta el país del dispositivo; cae a Perú si no se reconoce. */
 function detectCountry(): Country {
   try {
-    const region = Localization.getLocales()[0]?.regionCode; // ej. "PE"
+    const region = Localization.getLocales()[0]?.regionCode;
     return countryByCode(region) ?? DEFAULT_COUNTRY;
   } catch {
     return DEFAULT_COUNTRY;
@@ -46,18 +47,17 @@ function detectCountry(): Country {
 
 export function ContactPicker({ visible, onClose, onSelect }: Props) {
   const { colors } = useTheme();
+  const insets = useSafeAreaInsets();
+
   const [saved, setSaved] = useState<Contact[]>([]);
   const [manualName, setManualName] = useState('');
   const [manualNumber, setManualNumber] = useState('');
   const [country, setCountry] = useState<Country>(DEFAULT_COUNTRY);
   const [countryPickerVisible, setCountryPickerVisible] = useState(false);
-
-  // Contactos: tu agenda del teléfono CRUZADA con quién tiene WhatsApp.
   const [waContacts, setWaContacts] = useState<MatchedContact[]>([]);
   const [waLoading, setWaLoading] = useState(false);
   const [waError, setWaError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
-  // 'manual' = entrada manual; 'wa' = lista de WhatsApp.
   const [tab, setTab] = useState<'wa' | 'manual'>('wa');
 
   useEffect(() => {
@@ -75,7 +75,6 @@ export function ContactPicker({ visible, onClose, onSelect }: Props) {
     setWaLoading(true);
     setWaError(null);
     try {
-      // 1) Quién tiene WhatsApp (vía backend/Evolution).
       const wa = await getWhatsAppContacts();
       if (wa.length === 0) {
         setWaContacts([]);
@@ -84,8 +83,6 @@ export function ContactPicker({ visible, onClose, onSelect }: Props) {
         );
         return;
       }
-      // 2) Cruzar con la agenda del teléfono: solo tus agendados que tienen WA,
-      //    con el nombre de TU agenda. La agenda no sale del teléfono.
       const { status, contacts } = await matchAgendaWithWhatsApp(wa);
       if (status === 'denied') {
         setWaContacts([]);
@@ -115,7 +112,6 @@ export function ContactPicker({ visible, onClose, onSelect }: Props) {
     );
   }, [query, waContacts]);
 
-  // Confirma un contacto ya en formato internacional (dígitos con código país).
   const choose = async (name: string, internationalNumber: string) => {
     const number = normalizeNumber(internationalNumber);
     if (!name.trim() || number.length < 8) {
@@ -127,8 +123,6 @@ export function ContactPicker({ visible, onClose, onSelect }: Props) {
     onClose();
   };
 
-  // Ingreso manual: el número del input es LOCAL; le anteponemos el prefijo del
-  // país elegido en el selector.
   const chooseManual = () => {
     const local = normalizeNumber(manualNumber);
     if (!manualName.trim() || local.length < 6) {
@@ -138,62 +132,176 @@ export function ContactPicker({ visible, onClose, onSelect }: Props) {
     choose(manualName, `${country.dialCode}${local}`);
   };
 
-  return (
-    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
-      <View style={styles.backdrop}>
+  // Modal fullscreen para ingreso manual — KeyboardAwareScrollView funciona
+  // correctamente en pantalla completa en ambas plataformas.
+  const manualModal = (
+    <Modal
+      visible={visible && tab === 'manual'}
+      animationType="slide"
+      onRequestClose={() => setTab('wa')}
+    >
+      <View style={{ flex: 1, backgroundColor: colors.background }}>
         <View
           style={[
-            styles.sheet,
-            { backgroundColor: colors.background, borderColor: colors.border },
+            styles.fullHeader,
+            {
+              paddingTop: insets.top + 12,
+              borderBottomColor: colors.border,
+              backgroundColor: colors.background,
+            },
           ]}
         >
-          <View style={styles.handleWrap}>
-            <View style={[styles.handle, { backgroundColor: colors.border }]} />
-          </View>
+          <Pressable onPress={() => setTab('wa')} hitSlop={10}>
+            <Ionicons name="arrow-back" size={24} color={colors.text} />
+          </Pressable>
+          <Text style={[styles.fullTitle, { color: colors.text }]}>Ingreso manual</Text>
+          <View style={{ width: 24 }} />
+        </View>
 
-          <View style={styles.headerRow}>
-            <Text style={[styles.title, { color: colors.text }]}>
-              Elegir destinatario
-            </Text>
-            <Pressable onPress={onClose} hitSlop={10}>
-              <Ionicons name="close" size={24} color={colors.textMuted} />
-            </Pressable>
-          </View>
-
-          {/* Toggle WhatsApp / Manual */}
-          <View style={[styles.tabs, { backgroundColor: colors.surfaceAlt }]}>
-            {(['wa', 'manual'] as const).map((t) => {
-              const active = tab === t;
-              return (
+        <KeyboardAwareScrollView
+          contentContainerStyle={{
+            padding: 20,
+            paddingBottom: insets.bottom + 24,
+          }}
+          keyboardShouldPersistTaps="handled"
+          enableOnAndroid
+          extraScrollHeight={20}
+        >
+          {saved.length > 0 && (
+            <>
+              <Text style={[styles.sectionLabel, { color: colors.textMuted }]}>
+                Recientes
+              </Text>
+              {saved.map((item) => (
                 <Pressable
-                  key={t}
-                  onPress={() => setTab(t)}
-                  style={[
-                    styles.tab,
-                    active && { backgroundColor: colors.surface },
+                  key={item.id}
+                  onPress={() => choose(item.name, item.number)}
+                  style={({ pressed }) => [
+                    styles.savedRow,
+                    { borderBottomColor: colors.border },
+                    pressed && { opacity: 0.6 },
                   ]}
                 >
-                  <Ionicons
-                    name={t === 'wa' ? 'logo-whatsapp' : 'create-outline'}
-                    size={16}
-                    color={active ? colors.primary : colors.textMuted}
-                  />
-                  <Text
-                    style={[
-                      styles.tabText,
-                      { color: active ? colors.text : colors.textMuted },
-                    ]}
-                  >
-                    {t === 'wa' ? 'WhatsApp' : 'Manual'}
-                  </Text>
+                  <Ionicons name="person-circle-outline" size={28} color={colors.textMuted} />
+                  <View style={{ marginLeft: 10 }}>
+                    <Text style={[styles.savedName, { color: colors.text }]}>{item.name}</Text>
+                    <Text style={[styles.savedNum, { color: colors.textMuted }]}>
+                      {formatNumber(item.number)}
+                    </Text>
+                  </View>
                 </Pressable>
-              );
-            })}
+              ))}
+            </>
+          )}
+
+          <Text style={[styles.sectionLabel, { color: colors.textMuted, marginTop: saved.length > 0 ? 16 : 0 }]}>
+            Nuevo contacto
+          </Text>
+          <TextInput
+            value={manualName}
+            onChangeText={setManualName}
+            placeholder="Nombre"
+            placeholderTextColor={colors.textMuted}
+            style={[
+              styles.input,
+              { backgroundColor: colors.surface, borderColor: colors.border, color: colors.text },
+            ]}
+          />
+
+          <View style={styles.phoneRow}>
+            <Pressable
+              onPress={() => setCountryPickerVisible(true)}
+              style={({ pressed }) => [
+                styles.countryBtn,
+                { backgroundColor: colors.surface, borderColor: colors.border },
+                pressed && { opacity: 0.7 },
+              ]}
+              accessibilityRole="button"
+              accessibilityLabel={`País: ${country.name}, prefijo +${country.dialCode}`}
+            >
+              <Text style={styles.countryFlag}>{country.flag}</Text>
+              <Text style={[styles.countryDial, { color: colors.text }]}>+{country.dialCode}</Text>
+              <Ionicons name="chevron-down" size={16} color={colors.textMuted} />
+            </Pressable>
+
+            <TextInput
+              value={manualNumber}
+              onChangeText={setManualNumber}
+              placeholder="Número"
+              placeholderTextColor={colors.textMuted}
+              keyboardType="phone-pad"
+              style={[
+                styles.input,
+                styles.numberInput,
+                { backgroundColor: colors.surface, borderColor: colors.border, color: colors.text },
+              ]}
+            />
           </View>
 
-          {tab === 'wa' ? (
+          <Button
+            title="Usar este contacto"
+            onPress={chooseManual}
+            style={{ marginTop: 8 }}
+          />
+        </KeyboardAwareScrollView>
+      </View>
+
+      <CountryPicker
+        visible={countryPickerVisible}
+        onClose={() => setCountryPickerVisible(false)}
+        onSelect={setCountry}
+        selectedCode={country.code}
+      />
+    </Modal>
+  );
+
+  return (
+    <>
+      {/* Bottom sheet con tab WhatsApp */}
+      <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
+        <View style={styles.backdrop}>
+          <View
+            style={[
+              styles.sheet,
+              { backgroundColor: colors.background, borderColor: colors.border },
+            ]}
+          >
+            <View style={styles.handleWrap}>
+              <View style={[styles.handle, { backgroundColor: colors.border }]} />
+            </View>
+
+            <View style={styles.headerRow}>
+              <Text style={[styles.title, { color: colors.text }]}>Elegir destinatario</Text>
+              <Pressable onPress={onClose} hitSlop={10}>
+                <Ionicons name="close" size={24} color={colors.textMuted} />
+              </Pressable>
+            </View>
+
+            {/* Toggle WhatsApp / Manual */}
+            <View style={[styles.tabs, { backgroundColor: colors.surfaceAlt }]}>
+              {(['wa', 'manual'] as const).map((t) => {
+                const active = tab === t;
+                return (
+                  <Pressable
+                    key={t}
+                    onPress={() => setTab(t)}
+                    style={[styles.tab, active && { backgroundColor: colors.surface }]}
+                  >
+                    <Ionicons
+                      name={t === 'wa' ? 'logo-whatsapp' : 'create-outline'}
+                      size={16}
+                      color={active ? colors.primary : colors.textMuted}
+                    />
+                    <Text style={[styles.tabText, { color: active ? colors.text : colors.textMuted }]}>
+                      {t === 'wa' ? 'WhatsApp' : 'Manual'}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+
+            {/* Solo muestra WhatsApp aquí; Manual abre su propio Modal fullscreen */}
             <View style={styles.waWrap}>
-              {/* Buscador */}
               <View
                 style={[
                   styles.search,
@@ -219,25 +327,15 @@ export function ContactPicker({ visible, onClose, onSelect }: Props) {
               {waLoading ? (
                 <View style={styles.center}>
                   <ActivityIndicator color={colors.primary} />
-                  <Text style={[styles.muted, { color: colors.textMuted }]}>
-                    Cargando contactos…
-                  </Text>
+                  <Text style={[styles.muted, { color: colors.textMuted }]}>Cargando contactos…</Text>
                 </View>
               ) : waError ? (
                 <View style={styles.center}>
-                  <Ionicons
-                    name="cloud-offline-outline"
-                    size={32}
-                    color={colors.textMuted}
-                  />
-                  <Text style={[styles.muted, { color: colors.textMuted }]}>
-                    {waError}
-                  </Text>
+                  <Ionicons name="cloud-offline-outline" size={32} color={colors.textMuted} />
+                  <Text style={[styles.muted, { color: colors.textMuted }]}>{waError}</Text>
                   <Pressable onPress={loadWhatsAppContacts} style={styles.retry}>
                     <Ionicons name="refresh" size={16} color={colors.primary} />
-                    <Text style={[styles.retryText, { color: colors.primary }]}>
-                      Reintentar
-                    </Text>
+                    <Text style={[styles.retryText, { color: colors.primary }]}>Reintentar</Text>
                   </Pressable>
                 </View>
               ) : (
@@ -249,7 +347,7 @@ export function ContactPicker({ visible, onClose, onSelect }: Props) {
                   initialNumToRender={15}
                   ListEmptyComponent={
                     <Text style={[styles.muted, { color: colors.textMuted }]}>
-                      Sin resultados para “{query}”.
+                      Sin resultados para "{query}".
                     </Text>
                   }
                   renderItem={({ item }) => (
@@ -261,11 +359,7 @@ export function ContactPicker({ visible, onClose, onSelect }: Props) {
                         pressed && { opacity: 0.6 },
                       ]}
                     >
-                      <Ionicons
-                        name="person-circle-outline"
-                        size={30}
-                        color={colors.textMuted}
-                      />
+                      <Ionicons name="person-circle-outline" size={30} color={colors.textMuted} />
                       <View style={{ marginLeft: 10, flex: 1 }}>
                         <Text style={[styles.waName, { color: colors.text }]} numberOfLines={1}>
                           {item.name}
@@ -280,114 +374,16 @@ export function ContactPicker({ visible, onClose, onSelect }: Props) {
                 />
               )}
             </View>
-          ) : (
-            <View style={styles.manualWrap}>
-              {saved.length > 0 && (
-                <>
-                  <Text style={[styles.sectionLabel, { color: colors.textMuted }]}>
-                    Recientes
-                  </Text>
-                  <FlatList
-                    style={styles.savedList}
-                    data={saved}
-                    keyExtractor={(c) => c.id}
-                    keyboardShouldPersistTaps="handled"
-                    renderItem={({ item }) => (
-                      <Pressable
-                        onPress={() => choose(item.name, item.number)}
-                        style={({ pressed }) => [
-                          styles.savedRow,
-                          { borderBottomColor: colors.border },
-                          pressed && { opacity: 0.6 },
-                        ]}
-                      >
-                        <Ionicons
-                          name="person-circle-outline"
-                          size={28}
-                          color={colors.textMuted}
-                        />
-                        <View style={{ marginLeft: 10 }}>
-                          <Text style={[styles.savedName, { color: colors.text }]}>
-                            {item.name}
-                          </Text>
-                          <Text style={[styles.savedNum, { color: colors.textMuted }]}>
-                            {formatNumber(item.number)}
-                          </Text>
-                        </View>
-                      </Pressable>
-                    )}
-                  />
-                </>
-              )}
-
-              <Text style={[styles.sectionLabel, { color: colors.textMuted }]}>
-                Ingresar manualmente
-              </Text>
-              <TextInput
-                value={manualName}
-                onChangeText={setManualName}
-                placeholder="Nombre"
-                placeholderTextColor={colors.textMuted}
-                style={[
-                  styles.input,
-                  { backgroundColor: colors.surface, borderColor: colors.border, color: colors.text },
-                ]}
-              />
-
-              {/* Fila: selector de país (bandera + prefijo) + número local */}
-              <View style={styles.phoneRow}>
-                <Pressable
-                  onPress={() => setCountryPickerVisible(true)}
-                  style={({ pressed }) => [
-                    styles.countryBtn,
-                    { backgroundColor: colors.surface, borderColor: colors.border },
-                    pressed && { opacity: 0.7 },
-                  ]}
-                  accessibilityRole="button"
-                  accessibilityLabel={`País: ${country.name}, prefijo +${country.dialCode}`}
-                >
-                  <Text style={styles.countryFlag}>{country.flag}</Text>
-                  <Text style={[styles.countryDial, { color: colors.text }]}>
-                    +{country.dialCode}
-                  </Text>
-                  <Ionicons name="chevron-down" size={16} color={colors.textMuted} />
-                </Pressable>
-
-                <TextInput
-                  value={manualNumber}
-                  onChangeText={setManualNumber}
-                  placeholder="Número"
-                  placeholderTextColor={colors.textMuted}
-                  keyboardType="phone-pad"
-                  style={[
-                    styles.input,
-                    styles.numberInput,
-                    { backgroundColor: colors.surface, borderColor: colors.border, color: colors.text },
-                  ]}
-                />
-              </View>
-
-              <Button
-                title="Usar este contacto"
-                onPress={chooseManual}
-                style={{ marginTop: 6 }}
-              />
-            </View>
-          )}
+          </View>
         </View>
-      </View>
+      </Modal>
 
-      <CountryPicker
-        visible={countryPickerVisible}
-        onClose={() => setCountryPickerVisible(false)}
-        onSelect={setCountry}
-        selectedCode={country.code}
-      />
-    </Modal>
+      {/* Modal fullscreen para ingreso manual — teclado funciona correctamente */}
+      {manualModal}
+    </>
   );
 }
 
-/** Muestra un número como "+51 930299310" si reconocemos el prefijo. */
 function formatNumber(number: string): string {
   const { country, local } = splitDialCode(normalizeNumber(number));
   return country ? `+${country.dialCode} ${local}` : number;
@@ -416,7 +412,6 @@ const styles = StyleSheet.create({
     marginBottom: 14,
   },
   title: { fontSize: 20, fontWeight: '700' },
-
   tabs: {
     flexDirection: 'row',
     borderRadius: 12,
@@ -433,7 +428,6 @@ const styles = StyleSheet.create({
     borderRadius: 9,
   },
   tabText: { fontSize: 14, fontWeight: '600' },
-
   waWrap: { minHeight: 300 },
   search: {
     flexDirection: 'row',
@@ -455,22 +449,27 @@ const styles = StyleSheet.create({
   },
   waName: { fontSize: 15, fontWeight: '600' },
   waNum: { fontSize: 13, marginTop: 1 },
-
   center: { alignItems: 'center', justifyContent: 'center', paddingVertical: 40, gap: 10 },
   muted: { fontSize: 14, textAlign: 'center', paddingHorizontal: 20 },
   retry: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4 },
   retryText: { fontSize: 15, fontWeight: '600' },
-
-  manualWrap: {},
+  // fullscreen manual
+  fullHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingBottom: 14,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  fullTitle: { fontSize: 17, fontWeight: '700' },
   sectionLabel: {
     fontSize: 12,
     fontWeight: '700',
     textTransform: 'uppercase',
     letterSpacing: 0.5,
-    marginTop: 8,
     marginBottom: 8,
   },
-  savedList: { maxHeight: 180 },
   savedRow: {
     flexDirection: 'row',
     alignItems: 'center',
