@@ -1,14 +1,12 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
-  KeyboardAvoidingView,
-  Platform,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   View,
 } from 'react-native';
+import { KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view';
 import { Ionicons } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -251,20 +249,18 @@ export function EntryScreen({ mode }: Props) {
   const canGoBack = phase !== 'number' && !(mode === 'reconnect' && phase === 'pairing');
 
   return (
-    <KeyboardAvoidingView
+    <KeyboardAwareScrollView
       style={{ flex: 1, backgroundColor: colors.background }}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      contentContainerStyle={{
+        flexGrow: 1,
+        padding: 24,
+        paddingTop: insets.top + 40,
+        paddingBottom: insets.bottom + 24,
+      }}
+      keyboardShouldPersistTaps="handled"
+      enableOnAndroid
+      extraScrollHeight={20}
     >
-      <ScrollView
-        contentContainerStyle={{
-          flexGrow: 1,
-          padding: 24,
-          paddingTop: insets.top + 40,
-          paddingBottom: insets.bottom + 24,
-        }}
-        keyboardShouldPersistTaps="handled"
-        automaticallyAdjustKeyboardInsets
-      >
         {/* Barra superior: botón Atrás (no en el paso 1 ni en reconexión). */}
         {canGoBack && (
           <Pressable
@@ -435,8 +431,7 @@ export function EntryScreen({ mode }: Props) {
             )}
           </View>
         )}
-      </ScrollView>
-    </KeyboardAvoidingView>
+    </KeyboardAwareScrollView>
   );
 }
 

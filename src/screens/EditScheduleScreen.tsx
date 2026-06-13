@@ -1,15 +1,14 @@
 import React, { useEffect, useState } from 'react';
 import {
   Alert,
-  KeyboardAvoidingView,
   Platform,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from 'react-native';
+import { KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
@@ -185,10 +184,7 @@ export function EditScheduleScreen() {
   };
 
   return (
-    <KeyboardAvoidingView
-      style={{ flex: 1, backgroundColor: colors.background }}
-      behavior="padding"
-    >
+    <View style={{ flex: 1, backgroundColor: colors.background }}>
       <View style={[styles.header, { paddingTop: insets.top + 8, borderBottomColor: colors.border }]}>
         <Pressable onPress={() => navigation.goBack()} hitSlop={10}>
           <Ionicons name="close" size={26} color={colors.text} />
@@ -205,10 +201,11 @@ export function EditScheduleScreen() {
         )}
       </View>
 
-      <ScrollView
-        contentContainerStyle={{ padding: 20, paddingBottom: insets.bottom + 120 }}
+      <KeyboardAwareScrollView
+        contentContainerStyle={{ padding: 20, paddingBottom: insets.bottom + 40 }}
         keyboardShouldPersistTaps="handled"
-        automaticallyAdjustKeyboardInsets
+        enableOnAndroid
+        extraScrollHeight={20}
       >
         <Field
           label="Título"
@@ -476,7 +473,7 @@ export function EditScheduleScreen() {
           loading={saving}
           style={{ marginTop: 24 }}
         />
-      </ScrollView>
+      </KeyboardAwareScrollView>
 
       <ContactPicker
         visible={pickerVisible}
@@ -486,7 +483,7 @@ export function EditScheduleScreen() {
           setContactNumber(number);
         }}
       />
-    </KeyboardAvoidingView>
+    </View>
   );
 }
 
