@@ -109,7 +109,7 @@ function Splash() {
 export function RootNavigator() {
   const { isDark, colors } = useTheme();
   const { loading, isAuthenticated } = useAuth();
-  const { checking, isConnected } = useConnection();
+  const { checking, isConnected, forceReconnect } = useConnection();
 
   const navTheme = {
     ...(isDark ? DarkTheme : DefaultTheme),
@@ -136,7 +136,7 @@ export function RootNavigator() {
   let extras: React.ReactNode = null;
   if (!isAuthenticated) {
     content = <Stack.Screen name="Auth">{() => <EntryScreen mode="entry" />}</Stack.Screen>;
-  } else if (!isConnected) {
+  } else if (forceReconnect) {
     content = <Stack.Screen name="Auth">{() => <EntryScreen mode="reconnect" />}</Stack.Screen>;
   } else {
     content = (

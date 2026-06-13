@@ -20,6 +20,7 @@ type ConnectionContextValue = {
   state: ConnectionState;
   checking: boolean;
   isConnected: boolean;
+  forceReconnect: boolean;
   refresh: () => Promise<void>;
 };
 
@@ -36,6 +37,11 @@ export function ConnectionProvider({
   const [state, setState] = useState<ConnectionState>('unknown');
   const [checking, setChecking] = useState(true);
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Cuántas veces consecutivas el estado NO fue 'open'. Solo forzamos la
+  // pantalla de reconexión cuando esto llega a 2, evitando falsos positivos
+  // por estados transitorios de Baileys al arrancar ('connecting', etc.).
+  const notOpenCount = useRef(0);
+  const [forceReconnect, setForceReconnect] = useState(false);
 
   const refresh = useCallback(async () => {
     if (!isAuthenticated) {
@@ -46,6 +52,14 @@ export function ConnectionProvider({
     try {
       const s = await api.getWhatsAppStatus();
       setState(s.state);
+      if (s.state === 'open') {
+        notOpenCount.current = 0;
+        setForceReconnect(false);
+      } else {
+        notOpenCount.current += 1;
+        // Solo forzar reconexión tras 2 polls sin 'open' (≈8 s), no en el primero.
+        if (notOpenCount.current >= 2) setForceReconnect(true);
+      }
     } catch {
       setState('unknown');
     } finally {
@@ -60,11 +74,15 @@ export function ConnectionProvider({
       timer.current = null;
     }
     if (isAuthenticated) {
+      notOpenCount.current = 0;
+      setForceReconnect(false);
       setChecking(true);
-      refresh();
-      timer.current = setInterval(refresh, 4000);
+      refresh().finally(() => {
+        timer.current = setInterval(refresh, 4000);
+      });
     } else {
       setState('unknown');
+      setForceReconnect(false);
       setChecking(false);
     }
     return () => {
@@ -74,7 +92,7 @@ export function ConnectionProvider({
 
   return (
     <ConnectionContext.Provider
-      value={{ state, checking, isConnected: state === 'open', refresh }}
+      value={{ state, checking, isConnected: state === 'open', forceReconnect, refresh }}
     >
       {children}
     </ConnectionContext.Provider>

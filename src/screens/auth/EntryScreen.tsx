@@ -108,16 +108,9 @@ export function EntryScreen({ mode }: Props) {
     setLoading(true);
     try {
       await login(number, password); // setea sesión
-      const st = await api.authState(number);
-      if (st.state === 'open') {
-        // Ya conectado: entramos directo, sin paso de pairing.
-        await refreshConn();
-      } else {
-        // Falta vincular: pasamos al paso 3 (code bajo demanda).
-        finish.current = 'enter';
-        setPairingCode(null);
-        setPhase('pairing');
-      }
+      // El ConnectionContext arranca su polling y el gate decide.
+      // Solo necesitamos disparar un refresh para acelerar la primera comprobación.
+      await refreshConn();
     } catch (e: any) {
       setError(e?.message ?? 'No se pudo iniciar sesión.');
     } finally {
@@ -270,6 +263,7 @@ export function EntryScreen({ mode }: Props) {
           paddingBottom: insets.bottom + 24,
         }}
         keyboardShouldPersistTaps="handled"
+        automaticallyAdjustKeyboardInsets
       >
         {/* Barra superior: botón Atrás (no en el paso 1 ni en reconexión). */}
         {canGoBack && (
