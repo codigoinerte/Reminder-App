@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Alert,
   KeyboardAvoidingView,
@@ -18,6 +18,11 @@ import { Field } from '../components/Field';
 import { Button } from '../components/Button';
 import { ContactPicker } from '../components/ContactPicker';
 import * as api from '../api/client';
+import {
+  scheduleReminderNotification,
+  cancelReminderNotification,
+  hasReminderNotification,
+} from '../notifications/local';
 import { REPEAT_LABELS, type RepeatType, type ScheduleInput } from '../types';
 import { formatDate, formatTime } from '../utils/format';
 import type { RootStackParamList } from '../navigation/types';
@@ -44,6 +49,9 @@ export function EditScheduleScreen() {
     editing?.repeatType ?? 'once'
   );
   const [enabled, setEnabled] = useState(editing?.enabled ?? true);
+  // Notificación LOCAL en este teléfono (no se sincroniza ni la dispara el
+  // backend). Al editar, refleja si ya hay una programada en este dispositivo.
+  const [notify, setNotify] = useState(!editing);
 
   const [showDate, setShowDate] = useState(false);
   const [showTime, setShowTime] = useState(false);
@@ -55,6 +63,19 @@ export function EditScheduleScreen() {
     d.setMinutes(d.getMinutes() + 5, 0, 0);
     return d;
   }
+
+  // Al abrir en modo edición, consultamos si este teléfono ya tiene programada
+  // la notificación local de este recordatorio para reflejarlo en el switch.
+  useEffect(() => {
+    if (!editing) return;
+    let active = true;
+    hasReminderNotification(editing.id).then((has) => {
+      if (active) setNotify(has);
+    });
+    return () => {
+      active = false;
+    };
+  }, [editing]);
 
   const onChangeDate = (_: unknown, selected?: Date) => {
     setShowDate(Platform.OS === 'ios');
@@ -100,11 +121,30 @@ export function EditScheduleScreen() {
     };
     setSaving(true);
     try {
-      if (editing) {
-        await api.updateSchedule(editing.id, input);
+      const saved = editing
+        ? await api.updateSchedule(editing.id, input)
+        : await api.createSchedule(input);
+
+      // Notificación local en este teléfono: programar o cancelar según el
+      // switch. No bloquea el guardado si falla el permiso/programación.
+      if (notify) {
+        const ok = await scheduleReminderNotification({
+          scheduleId: saved.id,
+          title: saved.title,
+          message: saved.message,
+          date: new Date(saved.scheduleDate),
+          repeatType: saved.repeatType,
+        });
+        if (!ok) {
+          Alert.alert(
+            'Notificación no activada',
+            'El recordatorio se guardó, pero no se pudo programar la notificación local porque no diste permiso de notificaciones.'
+          );
+        }
       } else {
-        await api.createSchedule(input);
+        await cancelReminderNotification(saved.id);
       }
+
       navigation.goBack();
     } catch {
       Alert.alert('Error', 'No se pudo guardar el recordatorio.');
@@ -123,6 +163,7 @@ export function EditScheduleScreen() {
         onPress: async () => {
           try {
             await api.deleteSchedule(editing.id);
+            await cancelReminderNotification(editing.id);
             navigation.goBack();
           } catch {
             Alert.alert('Error', 'No se pudo eliminar.');
@@ -311,6 +352,52 @@ export function EditScheduleScreen() {
           </View>
         </Pressable>
 
+        {/* Notificación local en este teléfono */}
+        <Pressable
+          onPress={() => setNotify((v) => !v)}
+          style={[
+            styles.notifyRow,
+            { backgroundColor: colors.surface, borderColor: colors.border },
+          ]}
+        >
+          <View style={styles.notifyTextWrap}>
+            <View style={styles.notifyTitleRow}>
+              <Ionicons
+                name="notifications-outline"
+                size={18}
+                color={notify ? colors.primary : colors.textMuted}
+              />
+              <Text style={[styles.label, { color: colors.text, marginBottom: 0 }]}>
+                Notificarme en este teléfono
+              </Text>
+            </View>
+            <Text
+              numberOfLines={1}
+              ellipsizeMode="tail"
+              style={[styles.notifyPreview, { color: colors.textMuted }]}
+            >
+              {notify
+                ? message.trim()
+                  ? `Avisará: ${message.trim()}`
+                  : 'Te avisará a la hora con el mensaje del recordatorio.'
+                : 'Sin notificación local.'}
+            </Text>
+          </View>
+          <View
+            style={[
+              styles.miniSwitch,
+              { backgroundColor: notify ? colors.primary : colors.border },
+            ]}
+          >
+            <View
+              style={[
+                styles.miniThumb,
+                { alignSelf: notify ? 'flex-end' : 'flex-start' },
+              ]}
+            />
+          </View>
+        </Pressable>
+
         <Button
           title={editing ? 'Guardar cambios' : 'Crear recordatorio'}
           onPress={onSave}
@@ -371,6 +458,20 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 16,
   },
+  notifyRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 14,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    marginTop: 14,
+  },
+  notifyTextWrap: { flex: 1, gap: 6 },
+  notifyTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  notifyPreview: { fontSize: 13 },
   miniSwitch: {
     width: 50,
     height: 30,

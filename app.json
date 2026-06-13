@@ -46,7 +46,14 @@
           }
         }
       ],
-      "expo-localization"
+      "expo-localization",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/android-icon-monochrome.png",
+          "color": "#3486FA"
+        }
+      ]
     ]
   }
 }

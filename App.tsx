@@ -7,6 +7,11 @@ import { ThemeProvider, useTheme } from './src/theme/ThemeContext';
 import { AuthProvider } from './src/auth/AuthContext';
 import { ConnectionProvider } from './src/whatsapp/ConnectionContext';
 import { RootNavigator } from './src/navigation/RootNavigator';
+import { configureNotificationHandler } from './src/notifications/local';
+
+// Presentación de notificaciones locales en primer plano. Se registra una sola
+// vez a nivel de módulo (antes de cualquier render) como recomienda expo.
+configureNotificationHandler();
 
 function ThemedStatusBar() {
   const { isDark } = useTheme();
