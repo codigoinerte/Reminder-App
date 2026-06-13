@@ -14,6 +14,15 @@ export function setAuthToken(token: string | null) {
   authToken = token;
 }
 
+// Callback que se dispara cuando una petición AUTENTICADA recibe 401 (token
+// expirado/inválido). El AuthContext lo registra con signOut para sacar al
+// usuario al login de forma limpia. No se dispara en el 401 de login (ahí
+// todavía no hay token).
+let onUnauthorized: (() => void) | null = null;
+export function setUnauthorizedHandler(fn: (() => void) | null) {
+  onUnauthorized = fn;
+}
+
 /** Error con el status HTTP para que la UI distinga 401/404/etc. */
 export class ApiError extends Error {
   constructor(public status: number, message: string) {
@@ -32,6 +41,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   // vacío con Content-Type: application/json hace que el backend falle al
   // parsear (entity.parse.failed → 400).
   if (options.body != null) headers['Content-Type'] = 'application/json';
+  const wasAuthenticated = !!authToken;
   if (authToken) headers.Authorization = `Bearer ${authToken}`;
 
   // AbortController para que ningún fetch cuelgue indefinidamente: si el
@@ -56,6 +66,11 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const text = await res.text();
   const body = text ? safeJson(text) : undefined;
   if (!res.ok) {
+    // 401 en una petición que SÍ llevaba token = sesión expirada/inválida.
+    // Avisamos al AuthContext para que cierre sesión y caiga al login limpio.
+    if (res.status === 401 && wasAuthenticated) {
+      onUnauthorized?.();
+    }
     const msg =
       (body && typeof body === 'object' && 'error' in body
         ? (body as any).error
