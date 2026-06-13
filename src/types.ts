@@ -23,6 +23,8 @@ export type Schedule = {
   scheduleDate: string;
   repeatType: RepeatType;
   enabled: boolean;
+  /** Textos alternativos (solo repetitivos). El server rota entre estos y `message`. */
+  messageVariants: string[];
   lastSentAt: string | null;
   status: ScheduleStatus;
   createdAt: string;
@@ -37,6 +39,8 @@ export type ScheduleInput = {
   scheduleDate: string;
   repeatType: RepeatType;
   enabled: boolean;
+  /** Variantes opcionales; el server las ignora si repeatType === 'once'. */
+  messageVariants?: string[];
 };
 
 /** Estado de conexión de WhatsApp vía Evolution. */
