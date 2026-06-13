@@ -7,6 +7,7 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from 'react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
@@ -47,6 +48,11 @@ export function EditScheduleScreen() {
   );
   const [repeatType, setRepeatType] = useState<RepeatType>(
     editing?.repeatType ?? 'once'
+  );
+  // Variantes de mensaje (solo repetitivos). El server rota entre estas y el
+  // mensaje principal para que el texto no sea idéntico cada vez (anti-baneo).
+  const [variants, setVariants] = useState<string[]>(
+    editing?.messageVariants ?? []
   );
   const [enabled, setEnabled] = useState(editing?.enabled ?? true);
   // Notificación LOCAL en este teléfono (no se sincroniza ni la dispara el
@@ -118,6 +124,11 @@ export function EditScheduleScreen() {
       scheduleDate: date.toISOString(),
       repeatType,
       enabled,
+      // Solo enviamos variantes en repetitivos; limpiamos vacías.
+      messageVariants:
+        repeatType === 'once'
+          ? []
+          : variants.map((v) => v.trim()).filter((v) => v.length > 0),
     };
     setSaving(true);
     try {
@@ -326,6 +337,66 @@ export function EditScheduleScreen() {
           })}
         </View>
 
+        {/* Variantes de mensaje: solo para repetitivos (anti-baneo). */}
+        {repeatType !== 'once' && (
+          <View style={{ marginBottom: 18 }}>
+            <Text style={[styles.label, { color: colors.text }]}>
+              Variantes del mensaje (opcional)
+            </Text>
+            <Text style={[styles.variantHint, { color: colors.textMuted }]}>
+              Al repetirse, se alterna entre el mensaje principal y estas
+              variantes para que no se envíe siempre el mismo texto.
+            </Text>
+            {variants.map((v, i) => (
+              <View key={i} style={styles.variantRow}>
+                <TextInput
+                  value={v}
+                  onChangeText={(t) =>
+                    setVariants((prev) =>
+                      prev.map((p, idx) => (idx === i ? t : p))
+                    )
+                  }
+                  placeholder={`Variante ${i + 1}`}
+                  placeholderTextColor={colors.textMuted}
+                  multiline
+                  style={[
+                    styles.variantInput,
+                    {
+                      backgroundColor: colors.surface,
+                      borderColor: colors.border,
+                      color: colors.text,
+                    },
+                  ]}
+                />
+                <Pressable
+                  onPress={() =>
+                    setVariants((prev) => prev.filter((_, idx) => idx !== i))
+                  }
+                  hitSlop={8}
+                  style={styles.variantRemove}
+                  accessibilityRole="button"
+                  accessibilityLabel="Quitar variante"
+                >
+                  <Ionicons name="close-circle" size={22} color={colors.danger} />
+                </Pressable>
+              </View>
+            ))}
+            <Pressable
+              onPress={() => setVariants((prev) => [...prev, ''])}
+              style={({ pressed }) => [
+                styles.variantAdd,
+                { borderColor: colors.border },
+                pressed && { opacity: 0.7 },
+              ]}
+            >
+              <Ionicons name="add" size={18} color={colors.primary} />
+              <Text style={[styles.variantAddText, { color: colors.primary }]}>
+                Añadir variante
+              </Text>
+            </Pressable>
+          </View>
+        )}
+
         {/* Activo */}
         <Pressable
           onPress={() => setEnabled((v) => !v)}
@@ -458,6 +529,31 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 16,
   },
+  variantHint: { fontSize: 12, marginBottom: 12 },
+  variantRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 },
+  variantInput: {
+    flex: 1,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontSize: 15,
+    minHeight: 48,
+    textAlignVertical: 'top',
+  },
+  variantRemove: { padding: 2 },
+  variantAdd: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderStyle: 'dashed',
+    borderRadius: 14,
+    paddingVertical: 12,
+    marginTop: 2,
+  },
+  variantAddText: { fontSize: 14, fontWeight: '600' },
   notifyRow: {
     flexDirection: 'row',
     alignItems: 'center',
