@@ -88,6 +88,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await SecureStore.deleteItemAsync(PHONE_KEY);
   }, []);
 
+  // Si una petición autenticada recibe 401 (token de 7 días expirado o
+  // inválido), el cliente HTTP dispara este handler → cerramos sesión y el gate
+  // del navegador muestra el login automáticamente.
+  useEffect(() => {
+    api.setUnauthorizedHandler(() => {
+      void signOut();
+    });
+    return () => api.setUnauthorizedHandler(null);
+  }, [signOut]);
+
   return (
     <AuthContext.Provider
       value={{
