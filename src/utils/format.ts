@@ -13,6 +13,22 @@ export function formatTime(iso: string): string {
   return `${h.toString().padStart(2, '0')}:${mm} ${ampm}`;
 }
 
+/**
+ * Formatea una hora guardada en UTC (hour/minute) como hora LOCAL legible.
+ * Construye un instante de hoy a esa hora UTC y lo pasa por formatTime (que
+ * usa la zona local del dispositivo).
+ */
+export function formatHourMinuteUTC(hour: number, minute: number): string {
+  const d = new Date();
+  d.setUTCHours(hour, minute, 0, 0);
+  return formatTime(d.toISOString());
+}
+
+/** Etiquetas cortas de los días de semana (0=domingo..6=sábado). */
+export const WEEKDAY_LABELS = ['D', 'L', 'M', 'M', 'J', 'V', 'S'];
+/** Etiquetas cortas de 3 letras (para tarjetas). */
+export const WEEKDAY_LABELS_3 = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
+
 export function formatDate(iso: string): string {
   const d = new Date(iso);
   return d.toLocaleDateString('es-PE', {

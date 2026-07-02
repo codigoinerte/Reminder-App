@@ -24,10 +24,20 @@ import {
   hasReminderNotification,
 } from '../notifications/local';
 import { REPEAT_LABELS, type RepeatType, type ScheduleInput } from '../types';
-import { formatDate, formatTime } from '../utils/format';
+import { formatDate, formatTime, WEEKDAY_LABELS } from '../utils/format';
 import type { RootStackParamList } from '../navigation/types';
 
-const REPEAT_OPTIONS: RepeatType[] = ['once', 'daily', 'weekly', 'monthly'];
+const REPEAT_OPTIONS: RepeatType[] = ['once', 'daily', 'weekly', 'monthly', 'custom'];
+
+/** Franja horaria en edición: hora local + su mensaje propio (si aplica). */
+type TimeSlot = { date: Date; message: string };
+
+/** Construye un Date (hora local) desde una hora guardada en UTC. */
+function slotFromUtc(hour: number, minute: number, message: string | null): TimeSlot {
+  const d = new Date();
+  d.setUTCHours(hour, minute, 0, 0);
+  return { date: d, message: message ?? '' };
+}
 
 export function EditScheduleScreen() {
   const { colors } = useTheme();
@@ -48,6 +58,18 @@ export function EditScheduleScreen() {
   const [repeatType, setRepeatType] = useState<RepeatType>(
     editing?.repeatType ?? 'once'
   );
+  // Horas del recordatorio (≥1). Cada una con su hora local y mensaje propio.
+  const [times, setTimes] = useState<TimeSlot[]>(
+    editing && editing.times.length > 0
+      ? editing.times.map((t) => slotFromUtc(t.hour, t.minute, t.message))
+      : [{ date: defaultDate(), message: '' }]
+  );
+  // Toggle "mismo mensaje en todas las horas".
+  const [sameMessage, setSameMessage] = useState(editing?.sameMessage ?? true);
+  // Días de semana (0=domingo..6=sábado); solo aplica a 'custom'.
+  const [weekDays, setWeekDays] = useState<number[]>(editing?.weekDays ?? []);
+  // Índice de la franja cuyo time-picker está abierto (o null).
+  const [timePickerIndex, setTimePickerIndex] = useState<number | null>(null);
   // Variantes de mensaje (solo repetitivos). El server rota entre estas y el
   // mensaje principal para que el texto no sea idéntico cada vez (anti-baneo).
   const [variants, setVariants] = useState<string[]>(
@@ -59,7 +81,6 @@ export function EditScheduleScreen() {
   const [notify, setNotify] = useState(!editing);
 
   const [showDate, setShowDate] = useState(false);
-  const [showTime, setShowTime] = useState(false);
   const [pickerVisible, setPickerVisible] = useState(false);
   const [saving, setSaving] = useState(false);
 
@@ -92,20 +113,58 @@ export function EditScheduleScreen() {
   };
 
   const onChangeTime = (_: unknown, selected?: Date) => {
-    setShowTime(Platform.OS === 'ios');
-    if (selected) {
-      const next = new Date(date);
-      next.setHours(selected.getHours(), selected.getMinutes(), 0, 0);
-      setDate(next);
+    const idx = timePickerIndex;
+    if (Platform.OS !== 'ios') setTimePickerIndex(null);
+    if (selected && idx != null) {
+      setTimes((prev) =>
+        prev.map((t, i) => {
+          if (i !== idx) return t;
+          const next = new Date(t.date);
+          next.setHours(selected.getHours(), selected.getMinutes(), 0, 0);
+          return { ...t, date: next };
+        })
+      );
     }
+  };
+
+  const addTime = () => {
+    setTimes((prev) => {
+      // Nueva franja: última hora + 1h (o default si no hay).
+      const base = prev.length ? new Date(prev[prev.length - 1].date) : defaultDate();
+      base.setHours(base.getHours() + 1);
+      return [...prev, { date: base, message: '' }];
+    });
+  };
+
+  const removeTime = (idx: number) => {
+    setTimes((prev) => (prev.length <= 1 ? prev : prev.filter((_, i) => i !== idx)));
+  };
+
+  const toggleWeekDay = (d: number) => {
+    setWeekDays((prev) =>
+      prev.includes(d) ? prev.filter((x) => x !== d) : [...prev, d].sort()
+    );
+  };
+
+  /** Instante (anchor date + hora local de la franja) para validar 'once'. */
+  const instantForSlot = (slot: TimeSlot): number => {
+    const d = new Date(date);
+    d.setHours(slot.date.getHours(), slot.date.getMinutes(), 0, 0);
+    return d.getTime();
   };
 
   const validate = (): string | null => {
     if (!title.trim()) return 'El título es obligatorio.';
     if (!message.trim()) return 'El mensaje es obligatorio.';
     if (!contactNumber) return 'Debes elegir un destinatario.';
-    if (repeatType === 'once' && date.getTime() < Date.now())
-      return 'La fecha/hora ya pasó. Elige una futura.';
+    if (times.length === 0) return 'Añade al menos una hora.';
+    if (repeatType === 'custom' && weekDays.length === 0)
+      return 'Elige al menos un día de la semana.';
+    if (
+      repeatType === 'once' &&
+      times.every((t) => instantForSlot(t) < Date.now())
+    )
+      return 'Todas las horas ya pasaron. Elige una futura.';
     return null;
   };
 
@@ -123,6 +182,14 @@ export function EditScheduleScreen() {
       scheduleDate: date.toISOString(),
       repeatType,
       enabled,
+      weekDays: repeatType === 'custom' ? weekDays : [],
+      sameMessage,
+      // Horas en UTC (la app trabaja en local; el backend en UTC).
+      times: times.map((t) => ({
+        hour: t.date.getUTCHours(),
+        minute: t.date.getUTCMinutes(),
+        message: sameMessage ? null : t.message.trim() || null,
+      })),
       // Solo enviamos variantes en repetitivos; limpiamos vacías.
       messageVariants:
         repeatType === 'once'
@@ -141,8 +208,15 @@ export function EditScheduleScreen() {
         const ok = await scheduleReminderNotification({
           scheduleId: saved.id,
           title: saved.title,
-          message: saved.message,
-          date: new Date(saved.scheduleDate),
+          baseMessage: saved.message,
+          sameMessage: saved.sameMessage,
+          times: saved.times.map((t) => ({
+            hour: t.hour,
+            minute: t.minute,
+            message: t.message,
+          })),
+          weekDays: saved.weekDays,
+          anchor: new Date(saved.scheduleDate),
           repeatType: saved.repeatType,
         });
         if (!ok) {
@@ -270,18 +344,99 @@ export function EditScheduleScreen() {
           </View>
         </View>
 
-        <Text style={[styles.label, { color: colors.text }]}>Hora</Text>
+        {/* Horas: una o varias por recordatorio */}
+        <Text style={[styles.label, { color: colors.text }]}>Horas</Text>
+
+        {/* Toggle: mismo mensaje en todas las horas */}
         <Pressable
-          onPress={() => setShowTime(true)}
-          style={({ pressed }) => [
-            styles.selector,
+          onPress={() => setSameMessage((v) => !v)}
+          style={[
+            styles.sameMsgRow,
             { backgroundColor: colors.surface, borderColor: colors.border },
+          ]}
+        >
+          <Text style={[styles.sameMsgText, { color: colors.text }]}>
+            Mismo mensaje en todas las horas
+          </Text>
+          <View
+            style={[
+              styles.miniSwitch,
+              { backgroundColor: sameMessage ? colors.primary : colors.border },
+            ]}
+          >
+            <View
+              style={[
+                styles.miniThumb,
+                { alignSelf: sameMessage ? 'flex-end' : 'flex-start' },
+              ]}
+            />
+          </View>
+        </Pressable>
+
+        {times.map((t, i) => (
+          <View key={i} style={{ marginBottom: 10 }}>
+            <View style={styles.timeRow}>
+              <Pressable
+                onPress={() => setTimePickerIndex(i)}
+                style={({ pressed }) => [
+                  styles.selector,
+                  { flex: 1, marginBottom: 0, backgroundColor: colors.surface, borderColor: colors.border },
+                  pressed && { opacity: 0.7 },
+                ]}
+              >
+                <Ionicons name="time-outline" size={20} color={colors.textMuted} />
+                <Text style={[styles.selectorText, { color: colors.text }]}>
+                  {formatTime(t.date.toISOString())}
+                </Text>
+              </Pressable>
+              {times.length > 1 && (
+                <Pressable
+                  onPress={() => removeTime(i)}
+                  hitSlop={8}
+                  style={styles.variantRemove}
+                  accessibilityRole="button"
+                  accessibilityLabel="Quitar hora"
+                >
+                  <Ionicons name="close-circle" size={24} color={colors.danger} />
+                </Pressable>
+              )}
+            </View>
+            {!sameMessage && (
+              <TextInput
+                value={t.message}
+                onChangeText={(text) =>
+                  setTimes((prev) =>
+                    prev.map((p, idx) => (idx === i ? { ...p, message: text } : p))
+                  )
+                }
+                placeholder={`Mensaje para las ${formatTime(t.date.toISOString())}`}
+                placeholderTextColor={colors.textMuted}
+                multiline
+                style={[
+                  styles.variantInput,
+                  {
+                    marginTop: 8,
+                    backgroundColor: colors.surface,
+                    borderColor: colors.border,
+                    color: colors.text,
+                  },
+                ]}
+              />
+            )}
+          </View>
+        ))}
+
+        <Pressable
+          onPress={addTime}
+          style={({ pressed }) => [
+            styles.variantAdd,
+            { borderColor: colors.border, marginBottom: 18 },
             pressed && { opacity: 0.7 },
           ]}
         >
-          <Ionicons name="time-outline" size={20} color={colors.textMuted} />
-          <Text style={[styles.selectorText, { color: colors.text }]}>
-            {formatTime(date.toISOString())}
+          <Ionicons name="add" size={18} color={colors.primary} />
+          <Text style={[styles.variantAddText, { color: colors.primary }]}>
+            Añadir hora
           </Text>
         </Pressable>
 
@@ -294,9 +449,9 @@ export function EditScheduleScreen() {
             onChange={onChangeDate}
           />
         )}
-        {showTime && (
+        {timePickerIndex != null && (
           <DateTimePicker
-            value={date}
+            value={times[timePickerIndex]?.date ?? new Date()}
             mode="time"
             display="default"
             onChange={onChangeTime}
@@ -334,6 +489,42 @@ export function EditScheduleScreen() {
             );
           })}
         </View>
+
+        {/* Días de la semana: solo para 'custom' (personalizado). */}
+        {repeatType === 'custom' && (
+          <View style={{ marginBottom: 18 }}>
+            <Text style={[styles.label, { color: colors.text }]}>Días</Text>
+            <View style={styles.weekRow}>
+              {WEEKDAY_LABELS.map((lbl, d) => {
+                const active = weekDays.includes(d);
+                return (
+                  <Pressable
+                    key={d}
+                    onPress={() => toggleWeekDay(d)}
+                    style={[
+                      styles.dayChip,
+                      {
+                        backgroundColor: active ? colors.primary : colors.surface,
+                        borderColor: active ? colors.primary : colors.border,
+                      },
+                    ]}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: active }}
+                  >
+                    <Text
+                      style={[
+                        styles.dayChipText,
+                        { color: active ? '#FFFFFF' : colors.text },
+                      ]}
+                    >
+                      {lbl}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </View>
+        )}
 
         {/* Variantes de mensaje: solo para repetitivos (anti-baneo). */}
         {repeatType !== 'once' && (
@@ -518,6 +709,28 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
   },
   chipText: { fontSize: 14, fontWeight: '600' },
+  weekRow: { flexDirection: 'row', gap: 6, flexWrap: 'wrap' },
+  dayChip: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    borderWidth: StyleSheet.hairlineWidth,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dayChipText: { fontSize: 15, fontWeight: '700' },
+  timeRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  sameMsgRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 14,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    marginBottom: 14,
+  },
+  sameMsgText: { fontSize: 14, fontWeight: '600', flex: 1 },
   activeRow: {
     flexDirection: 'row',
     alignItems: 'center',

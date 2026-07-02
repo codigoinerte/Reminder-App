@@ -56,62 +56,86 @@ export async function ensureNotificationPermission(): Promise<boolean> {
   return req.granted;
 }
 
+/** Una hora del recordatorio (hour/minute en UTC, como las guarda el backend). */
+export type NotifTime = {
+  hour: number;
+  minute: number;
+  message: string | null;
+};
+
+/** Convierte una hora UTC (hour/minute) a la hora LOCAL del dispositivo. */
+function utcToLocalHM(hour: number, minute: number): { hour: number; minute: number } {
+  const d = new Date();
+  d.setUTCHours(hour, minute, 0, 0);
+  return { hour: d.getHours(), minute: d.getMinutes() };
+}
+
 /**
- * Construye el trigger según la repetición. Para 'once' usamos la fecha exacta.
- * Para repeticiones, expo dispara a la próxima ocurrencia de esa hora (no
- * admite fecha de inicio en triggers nativos), así que tomamos hora/día de la
- * fecha elegida.
+ * Construye los triggers de UNA hora según la repetición. Devuelve un array
+ * porque 'custom' genera un trigger semanal por cada día seleccionado.
+ * hour/minute entran en UTC y se convierten a local (expo usa hora local).
  */
-function triggerFor(
+function triggersFor(
   repeatType: RepeatType,
-  date: Date
-): Notifications.NotificationTriggerInput {
-  const hour = date.getHours();
-  const minute = date.getMinutes();
+  timeUtc: { hour: number; minute: number },
+  anchor: Date,
+  weekDays: number[]
+): Notifications.NotificationTriggerInput[] {
+  const { hour, minute } = utcToLocalHM(timeUtc.hour, timeUtc.minute);
   switch (repeatType) {
     case 'daily':
-      return {
-        type: Notifications.SchedulableTriggerInputTypes.DAILY,
-        hour,
-        minute,
-      };
+      return [{ type: Notifications.SchedulableTriggerInputTypes.DAILY, hour, minute }];
     case 'weekly':
-      return {
-        type: Notifications.SchedulableTriggerInputTypes.WEEKLY,
-        // expo usa 1-7 con domingo=1; getDay() da 0-6 con domingo=0.
-        weekday: date.getDay() + 1,
-        hour,
-        minute,
-      };
+      return [
+        {
+          type: Notifications.SchedulableTriggerInputTypes.WEEKLY,
+          // expo usa 1-7 con domingo=1; getDay() da 0-6 con domingo=0.
+          weekday: anchor.getDay() + 1,
+          hour,
+          minute,
+        },
+      ];
     case 'monthly':
-      return {
-        type: Notifications.SchedulableTriggerInputTypes.MONTHLY,
-        day: date.getDate(),
+      return [
+        {
+          type: Notifications.SchedulableTriggerInputTypes.MONTHLY,
+          day: anchor.getDate(),
+          hour,
+          minute,
+        },
+      ];
+    case 'custom':
+      // Un trigger semanal por cada día marcado (0=domingo..6=sábado → 1-7).
+      return weekDays.map((wd) => ({
+        type: Notifications.SchedulableTriggerInputTypes.WEEKLY,
+        weekday: wd + 1,
         hour,
         minute,
-      };
+      }));
     case 'once':
-    default:
-      return {
-        type: Notifications.SchedulableTriggerInputTypes.DATE,
-        date,
-      };
+    default: {
+      // Fecha ancla a la hora local de esta franja.
+      const date = new Date(anchor);
+      date.setHours(hour, minute, 0, 0);
+      return [{ type: Notifications.SchedulableTriggerInputTypes.DATE, date }];
+    }
   }
 }
 
 /**
- * Programa (o reprograma) la notificación local de un recordatorio. Primero
- * cancela cualquier notificación previa de ese mismo recordatorio para no
- * duplicar. Guarda el id resultante en AsyncStorage. Si no hay permiso, no
- * programa y devuelve false.
- *
- * El `data.scheduleId` permite que el tap abra el detalle del recordatorio.
+ * Programa (o reprograma) las notificaciones locales de un recordatorio: UNA
+ * por cada hora (y por cada día en 'custom'). Cancela primero las previas para
+ * no duplicar. Guarda TODOS los ids resultantes (array JSON) en AsyncStorage.
+ * Si no hay permiso, no programa y devuelve false.
  */
 export async function scheduleReminderNotification(params: {
   scheduleId: string;
   title: string;
-  message: string;
-  date: Date;
+  baseMessage: string;
+  sameMessage: boolean;
+  times: NotifTime[];
+  weekDays: number[];
+  anchor: Date;
   repeatType: RepeatType;
 }): Promise<boolean> {
   await cancelReminderNotification(params.scheduleId);
@@ -119,31 +143,52 @@ export async function scheduleReminderNotification(params: {
   const granted = await ensureNotificationPermission();
   if (!granted) return false;
 
-  const notifId = await Notifications.scheduleNotificationAsync({
-    content: {
-      title: params.title || 'Recordatorio',
-      body: params.message,
-      data: { scheduleId: params.scheduleId },
-    },
-    trigger: triggerFor(params.repeatType, params.date),
-  });
+  const ids: string[] = [];
+  for (const t of params.times) {
+    const body =
+      params.sameMessage || !t.message ? params.baseMessage : t.message;
+    const triggers = triggersFor(
+      params.repeatType,
+      { hour: t.hour, minute: t.minute },
+      params.anchor,
+      params.weekDays
+    );
+    for (const trigger of triggers) {
+      const notifId = await Notifications.scheduleNotificationAsync({
+        content: {
+          title: params.title || 'Recordatorio',
+          body,
+          data: { scheduleId: params.scheduleId },
+        },
+        trigger,
+      }).catch(() => null);
+      if (notifId) ids.push(notifId);
+    }
+  }
 
-  await AsyncStorage.setItem(idKey(params.scheduleId), notifId);
+  await AsyncStorage.setItem(idKey(params.scheduleId), JSON.stringify(ids));
   return true;
 }
 
-/** Cancela la notificación local de un recordatorio (si existía). */
+/** Cancela TODAS las notificaciones locales de un recordatorio (si existían). */
 export async function cancelReminderNotification(
   scheduleId: string
 ): Promise<void> {
   const key = idKey(scheduleId);
   const existing = await AsyncStorage.getItem(key);
-  if (existing) {
-    await Notifications.cancelScheduledNotificationAsync(existing).catch(
-      () => {}
-    );
-    await AsyncStorage.removeItem(key);
+  if (!existing) return;
+  // Compat: antes se guardaba un solo id (string plano); ahora un array JSON.
+  let ids: string[];
+  try {
+    const parsed = JSON.parse(existing);
+    ids = Array.isArray(parsed) ? parsed : [existing];
+  } catch {
+    ids = [existing];
   }
+  for (const id of ids) {
+    await Notifications.cancelScheduledNotificationAsync(id).catch(() => {});
+  }
+  await AsyncStorage.removeItem(key);
 }
 
 /** ¿Este recordatorio tiene una notificación local programada en este teléfono? */
